@@ -12,11 +12,16 @@ from scipy.stats import mannwhitneyu
 from scipy.stats import chisquare
 import matplotlib.pyplot as plt
 
+"""
+not used in the latest analysis at all. 
+we didn't use the batch information afterall
+"""
+
 # Nested functions
 
 # Find gravitational peaks
 def has_gravity_peak(week_group): #or nadir
-  # Sort by date to ensure chronological order
+  # Sort by date to ensure chronological orderall_df
   week_group = week_group.sort_values('date')
   
   # Check if deldot changed from negative to positive

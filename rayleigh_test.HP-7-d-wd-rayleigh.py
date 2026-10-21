@@ -4,6 +4,8 @@ from astropy.stats import rayleightest, vonmisesmle
 import statsmodels.api as sm
 
 """
+use env munshroom
+if that doesn't work, try est-sfs
 turns out this is not a good idea except for testing for the clustering on Friday. the distance will be biased by selection
 if we restrict to the same week (most likely the distance will be [0,3.5] as the peak day is on friday and the LGP can 
 be uniformly distributed --> leading to a bias/false positive)

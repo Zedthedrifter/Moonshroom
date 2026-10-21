@@ -4,6 +4,11 @@ import statsmodels.api as sm
 from dlnm import crossbasis, crosspred, logknots, plot_crosspred
 from scipy import stats  # ensure scipy.stats is imported at top of file
 
+"""
+use env munshroom
+if that doesn't work, try est-sfs
+"""
+
 def run_normalized_dlnm(all_df, species_list, years=None, max_lag=7):
     """
     Fit a DLNM for each species using within-week normalized harvest
@@ -129,5 +134,108 @@ def run_normalized_dlnm(all_df, species_list, years=None, max_lag=7):
                 f"df = {df_diff}, p = {lr_p:.4f}")
     return results, daily
 
+def run_normalized_dlnm_moon(all_df, species_list, years=None, max_lag=7):
+    """
+    Fit a DLNM for each species using within-week normalized harvest
+    (proportion of weekly maximum) as the outcome and 'fraction' as the
+    continuous exposure. Full-moon reference = 99th percentile of fraction.
+    """
+    if years is None:
+        years = sorted(all_df.keys())
+    frames = []
+    for yr in years:
+        df = all_df[yr]['df'].copy()
+        df['date'] = pd.to_datetime(df['date'])
+        df['year'] = yr
+        df['cycle_offset'] = (df['dayofweek'] - 2) % 7
+        df['cycle_start'] = df['date'] - pd.to_timedelta(df['cycle_offset'], unit='D')
+        frames.append(df)
+    daily = pd.concat(frames, ignore_index=True)
+    daily = daily.sort_values('date').reset_index(drop=True)
+    for sp in species_list:
+        if sp not in daily.columns:
+            continue
+        daily[f'{sp}_norm'] = daily.groupby('cycle_start')[sp].transform(
+            lambda x: x / x.max() if x.max() > 0 else 0.0
+        )
+    results = {}
+    for sp in species_list:
+        norm_col = f'{sp}_norm'
+        if norm_col not in daily.columns:
+            print(f"{sp}: column not found - skipped")
+            continue
+        sub = daily[['date', 'fraction', norm_col, 'year']].dropna()
+        if len(sub) < 30:
+            print(f"{sp}: too few observations ({len(sub)}) - skipped")
+            continue
+        y = sub[norm_col].values
+        y = np.clip(y, 1e-6, 1 - 1e-6)
+        exposure = sub['fraction'].values
+        lag_knots = logknots(max_lag, nk=2)
+        cb = crossbasis(
+            exposure,
+            lag=max_lag,
+            argvar={'fun': 'ns', 'df': 4},
+            arglag={'fun': 'ns', 'knots': lag_knots},
+        )
+        valid = ~np.isnan(cb).any(axis=1)
+        cb = cb[valid]
+        y = y[valid]
+        sub = sub[valid].reset_index(drop=True)
+        year_dummies = pd.get_dummies(sub['year'].astype(int), drop_first=True).values.astype(float)
+        X = np.column_stack([np.ones(len(sub)), cb, year_dummies])
+        try:
+            model = sm.GLM(y, X, family=sm.families.Binomial()).fit(scale='X2')
+        except Exception as e:
+            print(f"{sp}: model fit failed - {e}")
+            print(f"{sp}: NaN in outcome: {np.isnan(y).sum()}")
+            print(f"{sp}: NaN in exposure: {np.isnan(exposure).sum()}")
+            print(f"{sp}: NaN in cb: {np.isnan(cb).sum()}")
+            print(f"{sp}: Inf in cb: {np.isinf(cb).sum()}")
+            continue
+        full_moon_fraction = np.percentile(exposure, 99)
+        pred = crosspred(
+            cb,
+            coef=model.params[1:cb.shape[1] + 1],
+            vcov=model.cov_params()[1:cb.shape[1] + 1, 1:cb.shape[1] + 1],
+            at=full_moon_fraction,
+            model_link='logit',
+            cen=np.median(exposure),
+        )
+        log_or = pred.matfit[0, :]
+        se = pred.matse[0, :]
+        z = log_or / se
+        p_vals = 2 * (1 - stats.norm.cdf(np.abs(z)))
+        lag_table = pd.DataFrame({
+            'lag': np.arange(max_lag + 1),
+            'OR': np.exp(log_or),
+            'CI_low': np.exp(log_or - 1.96 * se),
+            'CI_high': np.exp(log_or + 1.96 * se),
+            'p_value': p_vals,
+        })
+        X_null = np.column_stack([np.ones(len(sub)), year_dummies])
+        model_null = sm.GLM(y, X_null, family=sm.families.Binomial()).fit(scale='X2')
+        lr_stat = 2 * (model.llf - model_null.llf)
+        df_diff = cb.shape[1]
+        lr_p = stats.chi2.sf(lr_stat, df_diff)
+        results[sp] = {
+            'model': model,
+            'cb': cb,
+            'pred': pred,
+            'full_moon_fraction': full_moon_fraction,
+            'n_obs': len(sub),
+            'lag_table': lag_table,
+            'lr_stat': lr_stat,
+            'lr_df': df_diff,
+            'lr_p': lr_p,
+        }
+        print(f"\n=== {sp} ===")
+        print(f"  Observations: {len(sub)}")
+        print(f"  Full-moon fraction (99th pct): {full_moon_fraction:.3f}")
+        print(lag_table.to_string(index=False, float_format='%.3f'))
+        print(f"  Overall LR test for cross-basis: chi2 = {lr_stat:.2f}, "
+              f"df = {df_diff}, p = {lr_p:.4f}")
+    return results, daily
 #USAGE
 results, daily=run_normalized_dlnm(all_df, species_list, years=None, max_lag=7)
+results, daily = run_normalized_dlnm_moon(all_df, species_list, years=None, max_lag=7)

@@ -13,6 +13,10 @@ from scipy.stats import mannwhitneyu
 from scipy.stats import chisquare
 import matplotlib.pyplot as plt
 
+"""
+use env est-sfs
+"""
+
 # Nested functions
 
 # Find gravitational peaks
