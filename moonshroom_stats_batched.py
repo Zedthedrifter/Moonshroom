@@ -1,4 +1,4 @@
-#!/home/zchen/apps/env/easy353/bin/python3
+#!/usr/bin/env python3
 # 2025.08.12
 # Zed ZChen@rbge.org.uk
 # Input: vcf file, with GT:DP available (default)
